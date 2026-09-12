@@ -1,0 +1,69 @@
+{
+  "name": "@argszero/cordis-plugin-repeat-guard-escalation",
+  "version": "0.1.0",
+  "description": "Enforcement tier for dsh's repeat-tool-reminder guard: when the model repeats an identical tool call past the advisory thresholds and ignores the reminder, deny the call before dispatch so the repeated action cannot execute again. Bounded (maxDenials) so a looping session can still finish. Closes Discussion #6370.",
+  "type": "module",
+  "main": "lib/index.js",
+  "types": "lib/types/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./lib/types/index.d.ts",
+      "default": "./lib/index.js"
+    },
+    "./src/*": "./src/*",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "lib/**/*.js",
+    "lib/types/**/*.d.ts",
+    "cordis.patch.yml",
+    "README.md",
+    "LICENSE"
+  ],
+  "license": "MIT",
+  "keywords": [
+    "cordis",
+    "deepseek-harness",
+    "dsh",
+    "plugin",
+    "guard",
+    "loop",
+    "repeat",
+    "tool-call"
+  ],
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "^4.0.2",
+    "@deepseek-ai/dsh-agent": ">=0.1.2-rc.1 <0.2.0 || >=0.1.3-alpha.1 <0.2.0 || >=0.1.5-alpha.1 <0.2.0",
+    "@deepseek-ai/dsh-tools": ">=0.1.2-rc.1 <0.2.0 || >=0.1.3-alpha.1 <0.2.0 || >=0.1.5-alpha.1 <0.2.0"
+  },
+  "devDependencies": {
+    "@deepseek-ai/cordis": "^4.0.2",
+    "@deepseek-ai/dsh-agent": "0.1.2-rc.1",
+    "@deepseek-ai/dsh-llm": "0.1.2-rc.1",
+    "@deepseek-ai/dsh-scope": "0.1.2-rc.1",
+    "@deepseek-ai/dsh-session": "0.1.2-rc.1",
+    "@deepseek-ai/dsh-system-prompt": "0.1.2-rc.1",
+    "@deepseek-ai/dsh-tools": "0.1.2-rc.1",
+    "typescript": "^5.5.0"
+  },
+  "scripts": {
+    "build": "tsc",
+    "prepublishOnly": "tsc",
+    "test": "node --test \"test/*.spec.mjs\""
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/argszero/cordis-plugin-repeat-guard-escalation.git"
+  },
+  "engines": {
+    "node": "^22.19 || >=24"
+  }
+}
