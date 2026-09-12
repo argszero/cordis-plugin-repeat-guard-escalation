@@ -4,7 +4,9 @@ Give dsh's `repeat-tool-reminder` guard **teeth**.
 
 `dsh` plugin (bundle patch). When a model repeats an identical tool call past
 the advisory thresholds and ignores the reminder, this plugin **denies the call
-before dispatch**, so the repeated action cannot execute again.
+before dispatch**, so the repeated action cannot execute again. A call that is
+repeated *and failing* is denied much earlier (`escalateFailingAt`, default 3),
+because retrying unchanged arguments against a deterministic error cannot work.
 
 ## The problem
 
@@ -65,6 +67,43 @@ what actually breaks the cycle.
 The reminder is not replaced. The shipped guard still runs and still explains
 itself; this plugin only adds the consequence after advice has been ignored.
 
+## Failing repeats: the second #6370 report
+
+The same discussion reports a variant with a different shape. An `edit` whose
+`old_string` and `new_string` were identical failed deterministically —
+
+```
+old_string and new_string must differ
+```
+
+— and the model re-sent the same failing call many times instead of re-reading
+the target or reconstructing the patch. The shipped reminder is **failure-blind**:
+it counts calls and never inspects their results, so this case gets the same
+gentle advice as a successful poll loop, at the same late thresholds.
+
+A successful repeat may be legitimate (polling a job); a failing repeat with
+unchanged arguments is not, because the arguments it keeps sending are the ones
+the error is complaining about. So this plugin escalates the two separately:
+
+```
+Blocked: `edit` has now been called with identical arguments 4 times in a row,
+and the last 3 of them failed with the same error. Repeating it cannot succeed —
+the tool is not going to accept these arguments on the next attempt. The failure
+was: old_string and new_string must differ. Change the arguments so they no
+longer trigger it, or use a different tool. If the change you intended may
+already have been applied, read the target back before editing it again.
+Further identical calls will be blocked automatically.
+```
+
+The error is quoted back verbatim, because the model's next move has to be
+against that specific complaint. A success clears the failure streak, so a poll
+loop is never escalated early; a changed call resets both.
+
+One deployment note: `escalateFailingAt` counts **observed** failures, so the
+default of 3 lets three failing calls through and refuses the fourth. Whether an
+in-flight call will fail is not knowable before it runs, and assuming it would be
+exactly the false positive this rule exists to avoid.
+
 ## Install
 
 ```sh
@@ -90,6 +129,7 @@ or directly:
 | key | default | meaning |
 |---|---|---|
 | `escalateAt` | `9` | Consecutive identical attempts at which the call is denied before dispatch |
+| `escalateFailingAt` | `3` | Identical *failing* attempts observed before the call is denied (the next attempt is refused) |
 | `maxDenials` | `3` | How many times one chain may be denied before the guard steps aside |
 | `include` | `[]` | Only these tools are tracked; empty means every tool |
 | `exclude` | `[]` | Never track these tools (they neither count nor clear a chain) |
@@ -99,6 +139,7 @@ or directly:
     - id: repeat-guard-escalation
       config:
         escalateAt: 9
+        escalateFailingAt: 3
         maxDenials: 3
         exclude: ['todo_write']
 ```
@@ -121,6 +162,10 @@ non-integer, or a `maxDenials` below 1 — never a silent change of behaviour.
   just as important, a genuinely different call cannot be mistaken for one. A
   false negative costs one missed escalation; this rule is built so a false
   positive is structurally hard.
+- **A denial is never counted as a failure.** A denied call still reaches
+  `tools/post-execute` (that is a documented property of the seam, not an
+  accident), so the plugin tags its own refusals; otherwise it would read its own
+  text as the tool's error and escalate against itself.
 - **Chains are per agent.** A parent and its subagent repeating the same call
   never combine their counts.
 - **Never breaks the pipeline.** The listener is total: any internal error is
@@ -131,8 +176,8 @@ non-integer, or a `maxDenials` below 1 — never a silent change of behaviour.
 ## Compatibility
 
 Mounts against the published dsh line `0.1.2-rc.1` and the `0.1.3`/`0.1.5`
-lines. It uses only the public `tools/pre-execute` and `agent/pre-step` seam
-signatures and the `ctx.tools` service.
+lines. It uses only the public `tools/pre-execute`, `tools/post-execute` and
+`agent/pre-step` seam signatures and the `ctx.tools` service.
 
 ## Source
 

@@ -35,6 +35,23 @@ function countingFixture(name) {
   }
 }
 
+/** A tool whose body always fails the way the second #6370 report describes. */
+function failingFixture(name, message) {
+  return {
+    name,
+    description: 'always-failing integration fixture',
+    parameters: { pattern: { type: 'string', required: true } },
+    output: {
+      schema: { type: 'string' },
+      render: (_args, value) => [{ type: 'text', text: String(value) }],
+    },
+    async execute() {
+      calls.n += 1
+      throw new Error(message)
+    },
+  }
+}
+
 const signal = () => new AbortController().signal
 const agent = { id: 's1', session: { id: 's1' } }
 
@@ -57,6 +74,23 @@ async function mount(config = {}) {
 /** One call through the real pipeline. */
 function call(ctx, args, who = agent) {
   return ctx.tools.execute({ name: 'grep', arguments: args, signal: signal(), agent: who })
+}
+
+/** Mount a registry whose tool always fails. */
+async function mountFailing(config = {}) {
+  calls.n = 0
+  const ctx = new Context()
+  ctx.logger = { info() {}, debug() {}, warn() {}, error() {} }
+  await ctx.plugin(systemPromptPlugin)
+  await ctx.plugin(toolsPlugin)
+  await ctx.plugin({ name: 'repeat-guard-escalation', apply: c => plugin.apply(c, config) })
+  ctx.tools.register(failingFixture('edit', 'old_string and new_string must differ'))
+  return ctx
+}
+
+/** One call of the failing tool through the real pipeline. */
+function callFailing(ctx, args, who = agent) {
+  return ctx.tools.execute({ name: 'edit', arguments: args, signal: signal(), agent: who })
 }
 
 test('exposes the documented plugin surface', () => {
@@ -170,4 +204,72 @@ test('invalid configuration fails loud instead of silently disabling the guard',
   for (const bad of [{ escalateAt: 1 }, { escalateAt: 2.5 }, { escalateAt: 'x' }, { maxDenials: 0 }]) {
     assert.throws(() => plugin.apply(ctxStub, bad), /repeat-guard-escalation/)
   }
+})
+
+test('a deterministic failure is denied far earlier than a successful repeat', async () => {
+  // The second #6370 report: identical failing Edit calls retried many times.
+  const ctx = await mountFailing({ escalateFailingAt: 3, escalateAt: 9, maxDenials: 1 })
+  // Three failures are observed; the fourth attempt is refused before dispatch.
+  for (let i = 0; i < 3; i += 1) {
+    const r = await callFailing(ctx, { pattern: 'x' })
+    assert.equal(r.isError, true, 'the tool really failed')
+    assert.match(r.content.map(b => b.text).join('\n'), /must differ/, 'a real failure reaches the model')
+  }
+  assert.equal(calls.n, 3)
+  const third = await callFailing(ctx, { pattern: 'x' })
+  assert.equal(third.isError, true)
+  assert.equal(calls.n, 3, 'the denied call must not have executed')
+  const text = third.content.map(b => b.text).join('\n')
+  assert.match(text, /Blocked/)
+  assert.match(text, /`edit`/)
+  assert.match(text, /the last 3 of them failed/)
+  assert.match(text, /old_string and new_string must differ/, 'the error is quoted back')
+})
+
+test('the guard never counts its own denial as a tool failure', async () => {
+  // The discriminating case needs a second denial: if a denial were counted as
+  // a tool failure, the NEXT denial would quote this plugin's own text back to
+  // the model as "the failure".
+  const ctx = await mountFailing({ escalateFailingAt: 2, escalateAt: 9, maxDenials: 2 })
+  await callFailing(ctx, { pattern: 'x' })
+  await callFailing(ctx, { pattern: 'x' })
+  const firstDenial = await callFailing(ctx, { pattern: 'x' })
+  assert.match(firstDenial.content.map(b => b.text).join('\n'), /The failure was: old_string and new_string must differ/)
+  assert.equal(calls.n, 2, 'the first denial must not reach the body')
+  // The second denial is the one that reveals self-feeding.
+  const secondDenial = await callFailing(ctx, { pattern: 'x' })
+  const text = secondDenial.content.map(b => b.text).join('\n')
+  assert.equal(secondDenial.isError, true)
+  assert.equal(calls.n, 2, 'the second denial must not reach the body either')
+  assert.match(text, /The failure was: old_string and new_string must differ/,
+    'the second denial must still quote the TOOL error')
+  assert.doesNotMatch(text, /The failure was: Blocked/,
+    'the guard must never quote its own denial back as the tool failure')
+})
+
+test('a failing chain resets when the call finally changes', async () => {
+  const ctx = await mountFailing({ escalateFailingAt: 3, escalateAt: 9, maxDenials: 2 })
+  await callFailing(ctx, { pattern: 'x' })
+  await callFailing(ctx, { pattern: 'x' })
+  // A different argument is a new attempt, not a repeat of the failing one:
+  // without the reset the third identical call would have been denied instead.
+  const other = await callFailing(ctx, { pattern: 'y' })
+  assert.equal(other.isError, true, 'the tool still fails')
+  assert.equal(calls.n, 3, 'a changed call must reach the body instead of being denied')
+  const still = await callFailing(ctx, { pattern: 'x' })
+  assert.equal(still.isError, true, 'x is back to one failing attempt, not three')
+  assert.equal(calls.n, 4)
+})
+
+test('successful repeats still get the slow, advice-first threshold', async () => {
+  const ctx = await mount({ escalateFailingAt: 3, escalateAt: 4, maxDenials: 1 })
+  for (let i = 0; i < 3; i += 1) {
+    const r = await call(ctx, { pattern: 'a' })
+    assert.equal(r.isError, false, 'a successful poll loop is not a failure loop')
+  }
+  assert.equal(calls.n, 3)
+  const fourth = await call(ctx, { pattern: 'a' })
+  assert.equal(fourth.isError, true)
+  assert.equal(calls.n, 3)
+  assert.match(fourth.content.map(b => b.text).join('\n'), /identical arguments 4 times/)
 })

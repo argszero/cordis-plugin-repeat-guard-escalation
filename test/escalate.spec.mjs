@@ -2,10 +2,11 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 
 import {
-  advance, canonicalize, chainKey, decide, escalationText, recordDenial, toolNameOf,
+  advance, canonicalize, chainKey, decide, escalationText, failureEscalationText,
+  failureOf, observeOutcome, recordDenial, toolNameOf,
 } from '../lib/escalate.js'
 
-const POLICY = { escalateAt: 9, maxDenials: 3 }
+const POLICY = { escalateAt: 9, escalateFailingAt: 3, maxDenials: 3 }
 
 /** Drive a chain n times with the same call and return the final chain. */
 const run = (key, times, start) => {
@@ -115,4 +116,74 @@ test('custom thresholds move the escalation point', () => {
   assert.equal(decide(chain, policy), undefined)
   chain = advance(chain, key)
   assert.ok(decide(chain, policy), 'the third repeat must deny under escalateAt:3')
+})
+
+test('a success clears the failure streak, a failure extends it', () => {
+  const key = chainKey('edit', { a: 1 })
+  let chain = advance(undefined, key)
+  chain = observeOutcome(chain, 'old_string and new_string must differ')
+  assert.equal(chain.failures, 1)
+  assert.equal(chain.lastFailure, 'old_string and new_string must differ')
+  chain = advance(chain, key)
+  chain = observeOutcome(chain, 'old_string and new_string must differ')
+  assert.equal(chain.failures, 2, 'consecutive failures accumulate')
+  // A success is progress: the chain keeps counting but stops looking broken.
+  chain = advance(chain, key)
+  chain = observeOutcome(chain, undefined)
+  assert.equal(chain.failures, 0)
+  assert.equal(chain.lastFailure, undefined)
+})
+
+test('a different call wipes the failure streak along with the chain', () => {
+  const first = chainKey('edit', { a: 1 })
+  const other = chainKey('edit', { a: 2 })
+  let chain = advance(undefined, first)
+  chain = observeOutcome(chain, 'boom')
+  chain = advance(chain, other)
+  assert.equal(chain.failures, 0, 'a different call is progress and clears the failure streak')
+  assert.equal(chain.lastFailure, undefined)
+})
+
+test('failing repeats escalate far earlier than successful ones', () => {
+  const key = chainKey('edit', { a: 1 })
+  // Three identical *successes* are still below the ordinary threshold.
+  let chain
+  for (let i = 0; i < 3; i += 1) {
+    chain = advance(chain, key)
+    chain = observeOutcome(chain, undefined)
+  }
+  assert.equal(decide(chain, POLICY), undefined, 'successful repeats keep the advice-first threshold')
+  // Three identical *failures* are denied, with the same chain length.
+  let failing
+  for (let i = 0; i < 3; i += 1) {
+    failing = advance(failing, key)
+    failing = observeOutcome(failing, 'old_string and new_string must differ')
+  }
+  const denial = decide(failing, POLICY)
+  assert.ok(denial, 'the third identical failure must be denied')
+  assert.match(denial, /identical arguments 3 times/)
+  assert.match(denial, /the last 3 of them failed/)
+})
+
+test('the failure escalation quotes the error back verbatim', () => {
+  const text = failureEscalationText('edit', 4, 4, 'old_string and new_string must differ', false)
+  assert.match(text, /`edit`/)
+  assert.match(text, /old_string and new_string must differ/)
+  assert.match(text, /read the target back before editing/)
+  assert.match(text, /blocked automatically/)
+})
+
+test('a failing chain below its own threshold is still allowed', () => {
+  const key = chainKey('edit', { a: 1 })
+  let chain
+  for (let i = 0; i < 2; i += 1) {
+    chain = advance(chain, key)
+    chain = observeOutcome(chain, 'boom')
+  }
+  assert.equal(decide(chain, POLICY), undefined, 'two failures is one short of escalateFailingAt')
+})
+
+test('a failure message is read only from an actual failure', () => {
+  assert.equal(failureOf({ isError: true, error: { message: 'boom' } }), 'boom')
+  assert.equal(failureOf({ isError: false, error: undefined }), undefined)
 })

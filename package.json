@@ -1,7 +1,7 @@
 {
   "name": "@argszero/cordis-plugin-repeat-guard-escalation",
-  "version": "0.1.0",
-  "description": "Enforcement tier for dsh's repeat-tool-reminder guard: when the model repeats an identical tool call past the advisory thresholds and ignores the reminder, deny the call before dispatch so the repeated action cannot execute again. Bounded (maxDenials) so a looping session can still finish. Closes Discussion #6370.",
+  "version": "0.1.1",
+  "description": "Enforcement tier for dsh's repeat-tool-reminder guard: deny an identical repeated tool call before dispatch once advice has been ignored, plus a much earlier tier for repeats that keep FAILING with the same error. Bounded (maxDenials) so a looping session can still finish. Closes Discussion #6370.",
   "type": "module",
   "main": "lib/index.js",
   "types": "lib/types/index.d.ts",

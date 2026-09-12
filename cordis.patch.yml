@@ -13,13 +13,19 @@
 # — so with the default [3, 5, 8] reminders, the 9th and later identical calls
 # draw no reminder at all. This plugin covers exactly that window.
 #
+# A call that is repeated AND failing is denied far earlier (`escalateFailingAt`,
+# default 3): an unchanged argument list cannot fix a deterministic error, so
+# that shape needs no grace period. Successful repeats keep the advice-first
+# threshold above, since a poll loop may be legitimate.
+#
 # Optional config:
 #
 #   - set:
 #       - id: repeat-guard-escalation
 #         config:
-#           escalateAt: 9      # deny from the 9th consecutive identical call
-#           maxDenials: 3      # then step aside, so the session can finish
+#           escalateAt: 9          # deny from the 9th consecutive identical call
+#           escalateFailingAt: 3   # deny after 3 identical FAILING calls
+#           maxDenials: 3          # then step aside, so the session can finish
 #           exclude: [todo_write]
 #
 # Enforcement is deliberately bounded: after `maxDenials` the guard steps aside
@@ -28,7 +34,7 @@
 #
 # A user message clears every chain, and a different call resets the chain —
 # only consecutive identical calls (same tool, same canonical arguments) can
-# reach the threshold.
+# reach the threshold. A success clears the failure streak.
 
 - insert:
     - id: repeat-guard-escalation
